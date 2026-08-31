@@ -242,11 +242,20 @@ function jfetch(url, opt, ms){   // fetch + 逾時（預設 6 秒）
   return fetch(url, Object.assign({signal:ac.signal}, opt)).finally(() => clearTimeout(t));
 }
 
+/* 併發防護：頁面載入時 pullPlayer 與 flushPending 會同時要 token，
+   若不共用同一個請求，會各自註冊一個匿名帳號並互相覆蓋，導致偶發的讀取失敗。 */
+let tokenInFlight = null;
 async function getToken(force){
   if (!CLOUD_ON) return null;
-  const nowMs = Date.now();
-  if (!force && authCache && authCache.idToken && authCache.exp - nowMs > 300000)
+  if (!force && authCache && authCache.idToken && authCache.exp - Date.now() > 300000)
     return authCache.idToken;
+  if (tokenInFlight) return tokenInFlight;
+  tokenInFlight = fetchToken();
+  try { return await tokenInFlight; }
+  finally { tokenInFlight = null; }
+}
+async function fetchToken(){
+  const nowMs = Date.now();
   try {
     if (authCache && authCache.refreshToken){
       const r = await jfetch('https://securetoken.googleapis.com/v1/token?key=' + API_KEY, {

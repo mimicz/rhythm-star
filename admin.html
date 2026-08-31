@@ -128,11 +128,19 @@ function jfetch(url, opt, ms){
   const t = setTimeout(() => ac.abort(), ms || 8000);
   return fetch(url, Object.assign({signal:ac.signal}, opt)).finally(() => clearTimeout(t));
 }
+// 併發防護：多個面板同時要 token 時共用同一個請求（見 index.html 同段說明）
+let tokenInFlight = null;
 async function getToken(force){
   if (!CLOUD_ON) return null;
-  const nowMs = Date.now();
-  if (!force && authCache && authCache.idToken && authCache.exp - nowMs > 300000)
+  if (!force && authCache && authCache.idToken && authCache.exp - Date.now() > 300000)
     return authCache.idToken;
+  if (tokenInFlight) return tokenInFlight;
+  tokenInFlight = fetchToken();
+  try { return await tokenInFlight; }
+  finally { tokenInFlight = null; }
+}
+async function fetchToken(){
+  const nowMs = Date.now();
   try {
     if (authCache && authCache.refreshToken){
       const r = await jfetch('https://securetoken.googleapis.com/v1/token?key=' + API_KEY, {
