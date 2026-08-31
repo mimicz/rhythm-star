@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>節奏小星星｜管理後台</title>
+<style>
+  :root{
+    --pink:#ff6ba9; --blue:#48c6ff; --yellow:#ffd166; --green:#5ee6a8;
+    --purple:#7b5cff; --bg1:#2b1b55; --bg2:#4a2c7a; --bg3:#1b1235;
+    --ink:#fff; --card:rgba(255,255,255,.12);
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;min-height:100%;}
+  body{
+    font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;
+    background:linear-gradient(160deg,var(--bg1),var(--bg2) 45%,var(--bg3)) fixed;
+    color:var(--ink); padding:18px;
+  }
+  h1{font-size:24px;margin:0 0 4px;}
+  h2{font-size:18px;margin:18px 0 8px;}
+  .sub{opacity:.8;font-size:13px;margin:0 0 14px;}
+  .btn{
+    border:none;border-radius:14px;padding:10px 18px;font-size:15px;font-weight:800;
+    color:#2a1a4d;cursor:pointer;font-family:inherit;
+    background:linear-gradient(180deg,#fff,#ffe9f4);
+    box-shadow:0 3px 0 rgba(0,0,0,.25); margin:4px 6px 4px 0;
+  }
+  .btn:active{transform:translateY(2px);box-shadow:0 1px 0 rgba(0,0,0,.25);}
+  .btn.warn{background:linear-gradient(180deg,#ffb3b3,#ff7a7a);}
+  .btn.ghost{background:rgba(255,255,255,.16);color:#fff;}
+  .btn.sm{padding:5px 10px;font-size:12px;border-radius:10px;margin:0;}
+  .panel{background:var(--card);border-radius:16px;padding:14px;margin:10px 0;
+         border:2px solid rgba(255,255,255,.16);}
+  .badge{border-radius:999px;padding:6px 14px;font-size:13px;font-weight:700;display:inline-block;margin:4px 0;}
+  .badge.ok{background:rgba(94,230,168,.22);color:#b6ffdc;}
+  .badge.bad{background:rgba(255,110,110,.25);color:#ffd6d6;}
+  input[type=password],input[type=text]{
+    padding:10px 12px;border-radius:12px;border:2px solid rgba(255,255,255,.3);
+    background:rgba(0,0,0,.25);color:#fff;font-size:15px;font-family:inherit;
+  }
+  table{border-collapse:collapse;width:100%;font-size:14px;}
+  th,td{padding:7px 10px;text-align:left;border-bottom:1px solid rgba(255,255,255,.14);white-space:nowrap;}
+  th{cursor:pointer;user-select:none;background:rgba(255,255,255,.08);position:sticky;top:0;}
+  th:hover{background:rgba(255,255,255,.16);}
+  td.num,th.num{text-align:right;}
+  .tabbar{display:flex;gap:8px;margin:14px 0 6px;flex-wrap:wrap;}
+  .tab{border:2px solid rgba(255,255,255,.3);background:rgba(255,255,255,.08);color:#fff;
+       border-radius:12px;padding:8px 16px;font-weight:800;cursor:pointer;font-family:inherit;font-size:14px;}
+  .tab.sel{background:#fff;color:#2a1a4d;}
+  .scroll{overflow-x:auto;}
+  .cards{display:flex;flex-wrap:wrap;gap:10px;}
+  .card{background:var(--card);border-radius:14px;padding:12px 16px;min-width:150px;
+        border:2px solid rgba(255,255,255,.14);}
+  .card .v{font-size:22px;font-weight:900;margin-top:2px;}
+  .bar{height:14px;border-radius:7px;background:var(--blue);min-width:2px;}
+  .barrow{display:flex;align-items:center;gap:8px;margin:4px 0;font-size:13px;}
+  .barrow .lbl{width:52px;flex:none;}
+  .hide{display:none !important;}
+</style>
+</head>
+<body>
+<!-- 管理員身分由 Firebase Authentication 驗證：
+     密碼不在這份原始碼裡，而是存在 Firebase（scrypt 雜湊、伺服器端驗證）。
+     刪除權限由 Realtime Database 安全性規則以 auth.uid 強制，前端繞不過。
+     DB_URL 與 API_KEY 本來就是公開識別碼、不是密鑰，公開無妨。 -->
+
+<div id="gate" class="panel" style="max-width:420px;margin:60px auto;text-align:center">
+  <h1>🔐 管理後台</h1>
+  <p class="sub">請用管理員帳號登入</p>
+  <input type="text" id="emailInp" placeholder="管理員 Email" autocomplete="username"
+         style="width:82%;margin-bottom:8px">
+  <input type="password" id="pwInp" placeholder="密碼" autocomplete="current-password"
+         style="width:82%">
+  <div><button class="btn" id="loginBtn">登入</button></div>
+  <p class="sub" id="gateMsg" style="color:#ffb3b3;margin-top:10px"></p>
+</div>
+
+<div id="main" class="hide">
+  <h1>🌟 節奏小星星 — 管理後台</h1>
+  <p class="sub">資料庫：<span id="dbLabel"></span> <span class="badge" id="stateBadge"></span></p>
+  <div>
+    <button class="btn" id="btnReload">🔄 重新整理</button>
+    <button class="btn" id="btnCsv">📥 匯出 CSV</button>
+    <button class="btn warn" id="btnWipe">🗑 清空所有雲端資料</button>
+    <button class="btn ghost" id="btnLogout">🚪 登出</button>
+  </div>
+
+  <div class="tabbar">
+    <button class="tab sel" data-t="players">👥 玩家總覽</button>
+    <button class="tab" data-t="board">🏆 各曲排行榜</button>
+    <button class="tab" data-t="stats">📊 統計</button>
+  </div>
+
+  <div id="tab-players">
+    <input type="text" id="searchInp" placeholder="🔍 過濾暱稱" style="width:220px;margin:6px 0">
+    <div class="scroll panel"><table id="playersTbl"></table></div>
+  </div>
+  <div id="tab-board" class="hide"></div>
+  <div id="tab-stats" class="hide"></div>
+</div>
+
+<div id="setupHint" class="panel hide" style="max-width:560px;margin:40px auto">
+  <h2>⚙️ 尚未設定</h2>
+  <p class="sub" style="line-height:1.8">
+    這個後台還沒設定 Firebase 連線。請開啟 admin.html，把頂端的
+    <b>DB_URL</b> 與 <b>API_KEY</b> 填成與 index.html 相同的值。
+  </p>
+</div>
+
+<script>
+"use strict";
+/* ===================== 雲端設定（需與 index.html 一致） ===================== */
+const DB_URL  = 'https://rhythm-star-3c4f6-default-rtdb.asia-southeast1.firebasedatabase.app';
+const API_KEY = 'AIzaSyDRiIpnxb6mn3IxchbNBCB0aXAIaEqk-rU';
+const DB_ROOT = 'v1';
+const CLOUD_ON = /^https:\/\/.+/.test(DB_URL) && API_KEY.length > 10;
+
+/* ---------- 管理員登入 + 網路層 ----------
+   用獨立的儲存鍵，避免蓋掉遊戲頁的匿名 token。 */
+const AUTH_KEY = 'rhythmStar_adminAuth';
+let authCache = null;
+try { authCache = JSON.parse(localStorage.getItem(AUTH_KEY) || 'null'); } catch(e){}
+function saveAuth(a){ authCache = a; try{ localStorage.setItem(AUTH_KEY, JSON.stringify(a)); }catch(e){} }
+function jfetch(url, opt, ms){
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(), ms || 8000);
+  return fetch(url, Object.assign({signal:ac.signal}, opt)).finally(() => clearTimeout(t));
+}
+async function getToken(force){
+  if (!CLOUD_ON) return null;
+  const nowMs = Date.now();
+  if (!force && authCache && authCache.idToken && authCache.exp - nowMs > 300000)
+    return authCache.idToken;
+  try {
+    if (authCache && authCache.refreshToken){
+      const r = await jfetch('https://securetoken.googleapis.com/v1/token?key=' + API_KEY, {
+        method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'},
+        body:'grant_type=refresh_token&refresh_token=' + encodeURIComponent(authCache.refreshToken)
+      });
+      if (r.ok){
+        const d = await r.json();
+        saveAuth({ idToken:d.id_token, refreshToken:d.refresh_token, exp: nowMs + (+d.expires_in||3600)*1000 });
+        return authCache.idToken;
+      }
+    }
+    // 沒有可用的 refreshToken → 必須重新登入（後台不使用匿名身分）
+    saveAuth(null);
+    return null;
+  } catch(e){ return null; }
+}
+
+/* 管理員登入：密碼直接送 Firebase 驗證，不留在程式碼裡，也不寫進 localStorage */
+async function adminLogin(email, password){
+  const r = await jfetch('https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=' + API_KEY, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ email, password, returnSecureToken:true })
+  });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok){
+    const m = (d.error && d.error.message) || 'UNKNOWN';
+    if (m.includes('INVALID_LOGIN') || m.includes('INVALID_PASSWORD') || m.includes('EMAIL_NOT_FOUND'))
+      throw new Error('帳號或密碼不正確');
+    if (m.includes('TOO_MANY_ATTEMPTS')) throw new Error('嘗試次數過多，請稍後再試');
+    throw new Error('登入失敗：' + m);
+  }
+  saveAuth({ idToken:d.idToken, refreshToken:d.refreshToken,
+             exp: Date.now() + (+d.expiresIn || 3600) * 1000, uid:d.localId });
+  return d.localId;
+}
+function adminLogout(){
+  saveAuth(null);
+  location.reload();
+}
+async function dbCall(method, path, obj, retried){
+  const tok = await getToken(retried);
+  if (!tok) return { ok:false };
+  try {
+    const r = await jfetch(
+      DB_URL + '/' + DB_ROOT + '/' + path + '.json?auth=' + encodeURIComponent(tok),
+      { method, body: obj === undefined ? undefined : JSON.stringify(obj) });
+    if ((r.status === 401 || r.status === 403) && !retried) return dbCall(method, path, obj, true);
+    if (!r.ok) return { ok:false, status:r.status };
+    return { ok:true, data: await r.json() };
+  } catch(e){ return { ok:false }; }
+}
+const dbGet = p => dbCall('GET', p);
+const dbDel = p => dbCall('DELETE', p);
+
+/* ---------- 曲目對照（與遊戲一致） ---------- */
+const SONGS = [
+  { id:'twinkle',  name:'小星星',        ico:'⭐' },
+  { id:'tiger',    name:'兩隻老虎',      ico:'🐯' },
+  { id:'mary',     name:'瑪莉的小綿羊',  ico:'🐑' },
+  { id:'birthday', name:'生日快樂',      ico:'🎂' },
+  { id:'rainbow',  name:'彩虹節奏',      ico:'🌈' }
+];
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+let players = {};   // pid -> player 物件
+let board = {};     // songId -> pid -> 條目
+
+/* ---------- 登入閘門（Firebase Authentication） ---------- */
+async function doLogin(){
+  const btn = $('loginBtn');
+  btn.disabled = true; $('gateMsg').textContent = '登入中…';
+  try {
+    await adminLogin($('emailInp').value.trim(), $('pwInp').value);
+    $('pwInp').value = '';          // 用完立刻清掉，不留在 DOM
+    $('gateMsg').textContent = '';
+    boot();
+  } catch(e){
+    $('gateMsg').textContent = e.message;
+  } finally { btn.disabled = false; }
+}
+$('loginBtn').onclick = doLogin;
+['emailInp','pwInp'].forEach(id =>
+  $(id).addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); }));
+
+function boot(){
+  $('gate').classList.add('hide');
+  if (!CLOUD_ON){ $('setupHint').classList.remove('hide'); return; }
+  $('main').classList.remove('hide');
+  $('dbLabel').textContent = DB_URL.replace(/^https:\/\//,'').split('.')[0];
+  reload();
+}
+
+/* ---------- 載入資料（規則不允許 GET /v1.json，分開抓） ---------- */
+async function reload(){
+  setState('讀取中…', true);
+  if (!(await getToken())){ location.reload(); return; }   // 登入已過期 → 退回登入畫面
+  const [p, b] = await Promise.all([dbGet('players'), dbGet('board')]);
+  if (!p.ok || !b.ok){ setState('❌ 讀取失敗（網路或權限問題）', false); return; }
+  players = p.data || {};
+  board = b.data || {};
+  setState('✅ ' + Object.keys(players).length + ' 位玩家', true);
+  renderPlayers(); renderBoard(); renderStats();
+}
+function setState(t, ok){
+  const el = $('stateBadge');
+  el.textContent = t; el.className = 'badge ' + (ok ? 'ok' : 'bad');
+}
+
+/* ---------- ① 玩家總覽 ---------- */
+let sortKey = 'total', sortDesc = true;
+function playerRows(){
+  const q = $('searchInp').value.trim().toLowerCase();
+  return Object.keys(players).map(pid => {
+    const p = players[pid], rec = p.rec || {};
+    const bests = {};
+    let total = 0;
+    SONGS.forEach(s => {
+      let m = 0;
+      for (let d = 0; d < 3; d++){
+        const r = rec[s.id + '_' + d];
+        if (r && r.score > m) m = r.score;
+      }
+      bests[s.id] = m; total += m;
+    });
+    return { pid, nick: p.nick || pid, plays: p.plays || 0, unlocked: p.unlocked || 1,
+             bests, total, updated: p.updated || 0 };
+  }).filter(r => !q || r.nick.toLowerCase().includes(q))
+    .sort((a,b) => {
+      let va = a[sortKey], vb = b[sortKey];
+      if (sortKey.startsWith('s_')){ va = a.bests[sortKey.slice(2)]; vb = b.bests[sortKey.slice(2)]; }
+      if (typeof va === 'string') return sortDesc ? vb.localeCompare(va) : va.localeCompare(vb);
+      return sortDesc ? vb - va : va - vb;
+    });
+}
+function renderPlayers(){
+  const rows = playerRows();
+  const fmtT = t => t ? new Date(t).toLocaleString('zh-TW', {hour12:false}) : '—';
+  let h = '<tr>' +
+    th('nick','暱稱') + th('plays','局數',1) + th('unlocked','解鎖',1) +
+    SONGS.map(s => th('s_'+s.id, s.ico, 1)).join('') +
+    th('total','總分',1) + th('updated','最後遊玩') + '<th></th></tr>';
+  rows.forEach(r => {
+    h += '<tr><td>' + esc(r.nick) + '</td><td class="num">' + r.plays + '</td><td class="num">' + r.unlocked + '</td>' +
+      SONGS.map(s => '<td class="num">' + (r.bests[s.id] || '') + '</td>').join('') +
+      '<td class="num"><b>' + r.total + '</b></td><td>' + fmtT(r.updated) + '</td>' +
+      '<td><button class="btn sm warn" onclick="delPlayer(\'' + encodeURIComponent(r.pid) + '\')">🗑</button></td></tr>';
+  });
+  $('playersTbl').innerHTML = h || '';
+  if (!rows.length) $('playersTbl').innerHTML = '<tr><td>（沒有資料）</td></tr>';
+}
+function th(k, label, num){
+  const arrow = sortKey === k ? (sortDesc ? ' ▼' : ' ▲') : '';
+  return '<th class="' + (num ? 'num' : '') + '" onclick="setSort(\'' + k + '\')">' + label + arrow + '</th>';
+}
+window.setSort = k => { if (sortKey === k) sortDesc = !sortDesc; else { sortKey = k; sortDesc = true; } renderPlayers(); };
+$('searchInp').addEventListener('input', renderPlayers);
+
+/* 刪除玩家：players/{pid} + 逐曲 board/{song}/{pid}（規則只開放逐節點刪） */
+window.delPlayer = async encPid => {
+  const pidKey = decodeURIComponent(encPid);
+  const nick = (players[pidKey] && players[pidKey].nick) || pidKey;
+  if (!confirm('確定要刪除玩家「' + nick + '」的所有雲端紀錄嗎？')) return;
+  setState('刪除中…', true);
+  await dbDel('players/' + pidKey);
+  for (const s of SONGS) await dbDel('board/' + s.id + '/' + pidKey);
+  reload();
+};
+
+/* ---------- ② 各曲排行榜 ---------- */
+function renderBoard(){
+  let h = '';
+  SONGS.forEach(s => {
+    const obj = board[s.id];
+    if (!obj || !Object.keys(obj).length) return;
+    const rows = Object.keys(obj).map(k => obj[k]).sort((a,b) => (b.s||0)-(a.s||0));
+    h += '<h2>' + s.ico + ' ' + s.name + '</h2><div class="scroll panel"><table><tr>' +
+         '<th>名次</th><th>暱稱</th><th class="num">分數</th><th>評價</th><th>難度</th><th>日期</th></tr>';
+    rows.forEach((r,i) => {
+      h += '<tr><td>' + (['🥇','🥈','🥉'][i] || (i+1)) + '</td><td>' + esc(r.nick) + '</td>' +
+           '<td class="num"><b>' + (+r.s||0) + '</b></td><td>' + esc(r.r) + '</td><td>' + esc(r.d) + '</td>' +
+           '<td>' + (r.at ? new Date(r.at).toLocaleDateString('zh-TW') : '—') + '</td></tr>';
+    });
+    h += '</table></div>';
+  });
+  $('tab-board').innerHTML = h || '<p class="sub">還沒有任何排行榜資料。</p>';
+}
+
+/* ---------- ③ 統計 ---------- */
+function renderStats(){
+  const pids = Object.keys(players);
+  let totalPlays = 0, topScore = 0, topNick = '—';
+  const songPlays = {}, diffCount = {簡單:0, 普通:0, 挑戰:0};
+  pids.forEach(pid => {
+    const p = players[pid];
+    totalPlays += p.plays || 0;
+    const rec = p.rec || {};
+    for (const k in rec){
+      const song = k.slice(0, k.lastIndexOf('_'));
+      const d = +k.slice(k.lastIndexOf('_') + 1);
+      songPlays[song] = (songPlays[song] || 0) + 1;
+      const dn = ['簡單','普通','挑戰'][d];
+      if (dn) diffCount[dn]++;
+      if (rec[k].score > topScore){ topScore = rec[k].score; topNick = p.nick || pid; }
+    }
+  });
+  let hotSong = '—', hot = 0;
+  SONGS.forEach(s => { if ((songPlays[s.id]||0) > hot){ hot = songPlays[s.id]; hotSong = s.ico + s.name; } });
+  const card = (t,v) => '<div class="card">' + t + '<div class="v">' + v + '</div></div>';
+  let h = '<div class="cards">' +
+    card('👥 總玩家數', pids.length) + card('🎮 總遊玩局數', totalPlays) +
+    card('🔥 最熱門曲目', hotSong) + card('🏅 最高分', topScore ? esc(topNick) + '（' + topScore + '）' : '—') +
+    '</div><h2>各難度紀錄數</h2><div class="panel">';
+  const max = Math.max(1, diffCount.簡單, diffCount.普通, diffCount.挑戰);
+  for (const dn of ['簡單','普通','挑戰'])
+    h += '<div class="barrow"><span class="lbl">' + dn + '</span>' +
+         '<div class="bar" style="width:' + (diffCount[dn]/max*60) + '%"></div>' + diffCount[dn] + '</div>';
+  $('tab-stats').innerHTML = h + '</div>';
+}
+
+/* ---------- 匯出 CSV（UTF-8 BOM，Excel 開啟不亂碼） ---------- */
+function csvEsc(v){
+  v = String(v == null ? '' : v);
+  return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+}
+$('btnCsv').onclick = () => {
+  const rows = [['暱稱','累計局數','解鎖進度', ...SONGS.map(s => s.name + '最佳'), '總分','最後遊玩']];
+  playerRows().forEach(r => rows.push([
+    r.nick, r.plays, r.unlocked, ...SONGS.map(s => r.bests[s.id] || 0), r.total,
+    r.updated ? new Date(r.updated).toLocaleString('zh-TW', {hour12:false}) : ''
+  ]));
+  const csv = '﻿' + rows.map(r => r.map(csvEsc).join(',')).join('\r\n');
+  const d = new Date(), pad = n => ('0'+n).slice(-2);
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv;charset=utf-8'}));
+  a.download = 'rhythm-star-成績-' + d.getFullYear() + pad(d.getMonth()+1) + pad(d.getDate()) + '.csv';
+  a.click();
+  URL.revokeObjectURL(a.href);
+};
+
+/* ---------- 清空所有雲端資料（規則不允許 DELETE /v1.json → 逐節點刪） ---------- */
+$('btnWipe').onclick = async () => {
+  const ans = prompt('⚠️ 這會永久刪除所有玩家與排行榜的雲端資料！\n確定的話請輸入 DELETE：');
+  if (ans !== 'DELETE') return;
+  setState('清空中…', true);
+  for (const pidKey of Object.keys(players)) await dbDel('players/' + pidKey);
+  for (const s of SONGS){
+    const obj = board[s.id] || {};
+    for (const pidKey of Object.keys(obj)) await dbDel('board/' + s.id + '/' + pidKey);
+  }
+  reload();
+};
+
+/* ---------- 分頁籤與其他 ---------- */
+document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
+  document.querySelectorAll('.tab').forEach(x => x.classList.toggle('sel', x === t));
+  ['players','board','stats'].forEach(n => $('tab-' + n).classList.toggle('hide', n !== t.dataset.t));
+});
+$('btnReload').onclick = reload;
+$('btnLogout').onclick = adminLogout;
+
+// 已有未過期的登入狀態就直接進入（換發失敗會退回登入畫面）
+if (authCache && authCache.refreshToken) getToken().then(t => { if (t) boot(); });
+</script>
+</body>
+</html>

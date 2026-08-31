@@ -23,6 +23,37 @@
 所有音樂皆由程式以 **Web Audio API 即時合成**（三角波旋律 + 大鼓 + Hi-Hat），沒有任何音訊檔案。
 曲目為公版童謠與原創曲，**可安心用於教學與公開場合**。
 
+## ☁️ 雲端記錄（跨裝置同步）
+
+遊戲支援以 **Firebase Realtime Database** 同步成績：同一個暱稱在不同裝置上共用
+最佳成績、解鎖進度與雲端排行榜。斷網或未設定時自動退回純本機模式，遊戲完全不受影響。
+
+- **暱稱即身分**：不需帳號密碼；撞名以「取最高分」合併，不會洗掉別人的紀錄
+- **離線韌性**：離線的成績暫存於本機，連線後自動上傳；上傳前必先拉取雲端現狀合併，低分不會倒退高分
+- **分級權限**：玩家（背景匿名登入）可讀可寫但**不能刪除**；刪除權由 Firebase 安全性規則
+  以管理員 `auth.uid` 在伺服器端強制，前端繞不過
+- **管理後台**：`admin.html` 提供玩家總覽、各曲排行、統計、CSV 匯出與資料清理，
+  以 **Firebase Email/Password 帳號登入**（密碼不在原始碼裡）
+
+### 自行部署設定（約 10 分鐘）
+
+1. 到 [Firebase Console](https://console.firebase.google.com) 建立專案（可關閉 Analytics）
+2. 建構 → **Realtime Database** → 建立資料庫（建議 `asia-southeast1`，鎖定模式）
+3. 建構 → **Authentication** → Sign-in method → 啟用「**匿名**」與「**電子郵件/密碼**」
+4. Authentication → Users → **Add user** 建立管理員帳號，記下 **UID**
+5. 專案設定 → 一般 → **新增網頁應用程式**（不勾 Hosting）→ 取得 `apiKey`
+6. 把資料庫網址與 `apiKey` 填入 `index.html` 與 `admin.html` 頂端的 `DB_URL`／`API_KEY`
+7. Realtime Database → 規則 → 貼上 `SPEC-cloud-sync.md` 第 5 節的規則 JSON
+   （把 `<ADMIN_UID>` 換成步驟 4 的 UID）並發布
+8. （建議）Google Cloud Console → API 憑證 → 把該 API key 的
+   **Application restrictions** 設為 Websites，限定你的網域
+
+任一值留空即為純本機模式。
+
+> **安全性說明**：`DB_URL` 與 `API_KEY` 是公開識別碼而非密鑰（Firebase 官方設計如此），
+> 出現在前端原始碼是正常的。實際防護在安全性規則：沒有管理員帳號就刪不掉任何資料。
+> 已知取捨：持有 API key 者仍可讀取與竄改成績 —— 本專案為家庭內部使用，接受此風險。
+
 ## 🛠 技術說明
 
 - 純前端單檔（`index.html`），HTML + CSS + Canvas 2D + Web Audio API

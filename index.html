@@ -111,8 +111,8 @@
     <h1>🌟 節奏小星星 🌟</h1>
     <p class="sub">跟著音樂點一點，你也是節奏高手！<br>適合國小學童 · 支援觸控與鍵盤</p>
     <div class="panel" style="max-width:420px">
-      <div class="lbl">👤 你的名字（會記錄成績）</div>
-      <input type="text" id="playerName" maxlength="8" placeholder="輸入名字">
+      <div class="lbl">👤 你的暱稱</div>
+      <input type="text" id="playerName" maxlength="8" placeholder="輸入暱稱">
     </div>
     <button class="btn big" id="btnStart">開始遊戲 ▶</button>
     <div class="row">
@@ -120,6 +120,7 @@
       <button class="btn ghost sm" id="btnTest">🔊 音效測試</button>
     </div>
     <div class="badge idle" id="audioBadge">🔈 尚未啟動音效</div>
+    <div class="badge idle" id="cloudBadge" style="display:none"></div>
     <div class="foot">音樂由程式即時合成，全部為公版童謠與原創曲，可安心於教學使用。</div>
   </div>
 
@@ -199,6 +200,11 @@
   <!-- 排行榜 -->
   <div class="scr" id="scr-board">
     <h2>🏆 排行榜</h2>
+    <div class="row" id="boardTabs" style="margin-bottom:8px">
+      <button class="chip sel" data-b="cloud" style="flex:0 1 auto">🌏 雲端排行</button>
+      <button class="chip" data-b="local" style="flex:0 1 auto">📱 這台裝置</button>
+    </div>
+    <div id="boardMsg" style="width:min(560px,100%)"></div>
     <div class="bd" id="boardBox"></div>
     <div class="row">
       <button class="btn ghost sm" id="btnBoardBack">← 回選單</button>
@@ -213,13 +219,183 @@
    節奏小星星 Rhythm Star  —  單一檔案兒童節奏遊戲
    ============================================================ */
 
+/* ===================== 雲端設定 =====================
+   貼上 Firebase 專案的兩個值即可啟用雲端記錄。
+   任一留空 '' → 自動退回純本機模式，遊戲功能完全不受影響。
+   ==================================================== */
+const DB_URL  = 'https://rhythm-star-3c4f6-default-rtdb.asia-southeast1.firebasedatabase.app';
+const API_KEY = 'AIzaSyDRiIpnxb6mn3IxchbNBCB0aXAIaEqk-rU';
+const DB_ROOT = 'v1';
+const CLOUD_ON = /^https:\/\/.+/.test(DB_URL) && API_KEY.length > 10;
+
+/* ---------- 0a. 匿名登入（REST，不載 SDK） ----------
+   idToken 有效 1 小時，剩不到 5 分鐘就主動換發；
+   refreshToken 失效（例如 Auto clean-up 刪了帳號）→ 重新註冊一個匿名帳號。 */
+const AUTH_KEY = 'rhythmStar_auth';
+let authCache = null;
+try { authCache = JSON.parse(localStorage.getItem(AUTH_KEY) || 'null'); } catch(e){}
+function saveAuth(a){ authCache = a; try{ localStorage.setItem(AUTH_KEY, JSON.stringify(a)); }catch(e){} }
+
+function jfetch(url, opt, ms){   // fetch + 逾時（預設 6 秒）
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(), ms || 6000);
+  return fetch(url, Object.assign({signal:ac.signal}, opt)).finally(() => clearTimeout(t));
+}
+
+async function getToken(force){
+  if (!CLOUD_ON) return null;
+  const nowMs = Date.now();
+  if (!force && authCache && authCache.idToken && authCache.exp - nowMs > 300000)
+    return authCache.idToken;
+  try {
+    if (authCache && authCache.refreshToken){
+      const r = await jfetch('https://securetoken.googleapis.com/v1/token?key=' + API_KEY, {
+        method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'},
+        body:'grant_type=refresh_token&refresh_token=' + encodeURIComponent(authCache.refreshToken)
+      });
+      if (r.ok){
+        const d = await r.json();
+        saveAuth({ idToken:d.id_token, refreshToken:d.refresh_token,
+                   exp: nowMs + (+d.expires_in || 3600) * 1000 });
+        return authCache.idToken;
+      }
+    }
+    const r2 = await jfetch('https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=' + API_KEY, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:'{"returnSecureToken":true}'
+    });
+    if (!r2.ok) return null;
+    const d2 = await r2.json();
+    saveAuth({ idToken:d2.idToken, refreshToken:d2.refreshToken,
+               exp: nowMs + (+d2.expiresIn || 3600) * 1000 });
+    return authCache.idToken;
+  } catch(e){ return null; }
+}
+
+/* ---------- 0b. RTDB REST 網路層 ----------
+   所有失敗都吞掉回 {ok:false}，絕不往上拋進遊戲迴圈。 */
+async function dbCall(method, path, obj, retried){
+  if (!CLOUD_ON) return { ok:false };
+  const tok = await getToken(retried);
+  if (!tok){ setCloud('off'); return { ok:false }; }
+  try {
+    const r = await jfetch(
+      DB_URL + '/' + DB_ROOT + '/' + path + '.json?auth=' + encodeURIComponent(tok),
+      { method, body: obj === undefined ? undefined : JSON.stringify(obj) });
+    if ((r.status === 401 || r.status === 403) && !retried)
+      return dbCall(method, path, obj, true);   // token 過期 → 換發一次重試
+    if (!r.ok){ setCloud('off'); return { ok:false }; }
+    setCloud('on');
+    return { ok:true, data: await r.json() };
+  } catch(e){ setCloud('off'); return { ok:false }; }
+}
+const dbGet   = p     => dbCall('GET', p);
+const dbPatch = (p,o) => dbCall('PATCH', p, o);
+const dbPut   = (p,o) => dbCall('PUT', p, o);
+const dbDel   = p     => dbCall('DELETE', p);
+const SV = { '.sv':'timestamp' };   // Firebase 伺服器時間戳
+
+/* ---------- 0c. 暱稱 → 玩家鍵值 ---------- */
+function nickKey(nick){
+  return String(nick || '')
+    .trim()
+    .replace(/[.$#\[\]\/\x00-\x1F\x7F]/g, '_')
+    .replace(/\s+/g, '_')
+    .slice(0, 24)
+    .toLowerCase() || 'guest';
+}
+const pid = () => nickKey(ST.player);
+
+/* ---------- 0d. 合併：分數高者勝、進度取大值 ---------- */
+function mergeStore(localS, cloudP){
+  const out = { unlocked: localS.unlocked || 1, plays: localS.plays || 0,
+                rec: Object.assign({}, localS.rec) };
+  if (!cloudP) return out;
+  out.unlocked = Math.max(out.unlocked, cloudP.unlocked || 1);
+  out.plays    = Math.max(out.plays,    cloudP.plays || 0);
+  for (const k in (cloudP.rec || {})){
+    const c = cloudP.rec[k], l = out.rec[k];
+    if (!l || (c.score || 0) > (l.score || 0)) out.rec[k] = c;
+  }
+  return out;
+}
+
+/* ---------- 0e. 同步核心 ---------- */
+async function pullPlayer(){
+  if (!CLOUD_ON || !ST.player) return false;
+  setCloud('sync');
+  const r = await dbGet('players/' + pid());
+  if (!r.ok) return false;
+  const m = mergeStore(ST, r.data);
+  ST.unlocked = m.unlocked; ST.plays = m.plays; ST.rec = m.rec;
+  saveStore();
+  return true;
+}
+
+/* 鐵律：push 前必先 pull 成功，否則不寫（避免離線快照倒退雲端紀錄）。
+   rec 用多路徑 PATCH 逐鍵寫入，不整包覆蓋。 */
+async function pushResult(evts){
+  if (!CLOUD_ON || !ST.player || !evts.length) return false;
+  if (!(await pullPlayer())) return false;
+  const body = { nick: ST.player, unlocked: ST.unlocked, plays: ST.plays, updated: SV };
+  for (const k in ST.rec) body['rec/' + k] = ST.rec[k];
+  if (!(await dbPatch('players/' + pid(), body)).ok) return false;
+  // board：只更新本批事件涉及的歌，內容 = 自己該曲跨難度最佳
+  const songs = evts.map(e => e.song).filter((s,i,a) => a.indexOf(s) === i);
+  for (const s of songs){
+    let best = null, bd = '';
+    for (let d = 0; d < DIFFS.length; d++){
+      const rc = ST.rec[s + '_' + d];
+      if (rc && (!best || rc.score > best.score)){ best = rc; bd = DIFFS[d].name; }
+    }
+    if (best) await dbPatch('board/' + s + '/' + pid(),
+      { nick: ST.player, s: best.score, r: best.rate, d: bd, at: SV });
+  }
+  return true;
+}
+
+/* ---------- 0f. 離線重試佇列（存遊玩結果事件，flush 重跑 pull→merge→push） ---------- */
+const PEND_KEY = 'rhythmStar_pending';
+function loadPend(){ try{ return JSON.parse(localStorage.getItem(PEND_KEY) || '[]'); }catch(e){ return []; } }
+function savePend(q){ try{ localStorage.setItem(PEND_KEY, JSON.stringify(q.slice(-50))); }catch(e){} }
+let flushing = false;
+async function flushPending(){
+  if (flushing || !CLOUD_ON) return;
+  const q = loadPend();
+  if (!q.length) return;
+  flushing = true;
+  try { if (await pushResult(q)) savePend([]); }
+  finally { flushing = false; }
+}
+function queueResult(evt){
+  const q = loadPend(); q.push(evt); savePend(q);
+  return flushPending();
+}
+
+/* ---------- 0g. 雲端狀態列 ---------- */
+function setCloud(st){
+  const el = document.getElementById('cloudBadge');
+  if (!el) return;
+  el.style.display = '';
+  if (!CLOUD_ON){ el.className = 'badge idle'; el.textContent = '📱 本機模式（成績只存在這台裝置）'; return; }
+  if (st === 'sync'){ el.className = 'badge idle'; el.textContent = '☁️ 同步中…'; }
+  else if (st === 'on'){
+    const d = new Date();
+    el.className = 'badge ok';
+    el.textContent = '☁️ 已同步（最後更新 ' +
+      ('0'+d.getHours()).slice(-2) + ':' + ('0'+d.getMinutes()).slice(-2) + '）';
+  }
+  else if (st === 'off'){ el.className = 'badge bad'; el.textContent = '📴 離線中，成績已暫存，連線後自動上傳'; }
+  else { el.className = 'badge idle'; el.textContent = '☁️ 雲端記錄已啟用'; }
+}
+
 /* ---------- 1. 成績儲存（localStorage，失敗自動退回記憶體） ---------- */
 const KEY = 'rhythmStar_v1';
 let memBlob = null, storageOK = true;
 try { localStorage.setItem(KEY + '_t', '1'); localStorage.removeItem(KEY + '_t'); }
 catch (e) { storageOK = false; }
 
-function defaultStore(){ return { player:'', unlocked:1, rec:{}, board:{} }; }
+function defaultStore(){ return { player:'', unlocked:1, plays:0, rec:{}, board:{} }; }
 function loadStore(){
   let raw = null;
   try { raw = localStorage.getItem(KEY); } catch(e){}
@@ -856,7 +1032,7 @@ function finish(){
     const k = G.song.id + '_' + G.di;
     const old = ST.rec[k];
     if (!old || G.score > old.score){
-      ST.rec[k] = { score:G.score, rate, combo:G.maxCombo, acc:Math.round(acc*100) };
+      ST.rec[k] = { score:G.score, rate, combo:G.maxCombo, acc:Math.round(acc*100), at:Date.now() };
       isNew = !!old || true; if (old && G.score<=old.score) isNew=false;
     }
     if (rate !== 'D' && idx+1 >= ST.unlocked && idx+1 < SONGS.length){
@@ -867,6 +1043,7 @@ function finish(){
     ST.board[bk].push({ n: ST.player || '小玩家', s:G.score, r:rate, d:DIFFS[G.di].name });
     ST.board[bk].sort((a,b)=>b.s-a.s);
     ST.board[bk] = ST.board[bk].slice(0,5);
+    ST.plays = (ST.plays || 0) + 1;
     saveStore();
   }
 
@@ -881,7 +1058,20 @@ function finish(){
     (prac ? '<div class="stat" style="border:0"><span>🐢 練習模式</span><b>不記錄</b></div>'
           : '<div class="stat" style="border:0"><span>🏅 這個難度最佳</span><b>'+(best?best.score:G.score)+
             (isNew?' <span style="color:#ffd166">NEW!</span>':'')+'</b></div>'+
-            (unlockedNew?'<div class="stat" style="border:0;color:#ffd166"><span>🔓 解鎖新歌曲！</span><b>'+SONGS[idx+1].name+'</b></div>':''));
+            (unlockedNew?'<div class="stat" style="border:0;color:#ffd166"><span>🔓 解鎖新歌曲！</span><b>'+SONGS[idx+1].name+'</b></div>':'')+
+            (CLOUD_ON?'<div class="stat" id="cloudStat" style="border:0;display:none"><span>☁️ 雲端</span><b id="cloudStatTxt"></b></div>':''));
+
+  if (!prac && CLOUD_ON){
+    queueResult({ song:G.song.id, diff:G.di, score:G.score, rate:rate,
+                  combo:G.maxCombo, acc:Math.round(acc*100) }).then(() => {
+      const el = document.getElementById('cloudStat');
+      if (el){
+        el.style.display = '';
+        document.getElementById('cloudStatTxt').textContent =
+          loadPend().length ? '📴 已暫存，連線後上傳' : '已上傳雲端排行';
+      }
+    });
+  }
 
   show('scr-result');
 }
@@ -934,10 +1124,56 @@ function renderBoard(){
 }
 const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
+/* 雲端排行榜：每首歌前 10 名（客戶端排序），失敗自動退回本機榜 */
+let boardMode = CLOUD_ON ? 'cloud' : 'local';
+async function renderBoardCloud(){
+  const b = $('boardBox');
+  b.innerHTML = '<p class="sub">☁️ 載入中…</p>';
+  const r = await dbGet('board');
+  if (!r.ok){
+    boardMode = 'local';
+    showBoard();
+    $('boardMsg').innerHTML = '<div class="warn">☁️ 雲端排行載入失敗，先顯示這台裝置的紀錄</div>';
+    return;
+  }
+  const data = r.data || {};
+  b.innerHTML = '';
+  let any = false;
+  SONGS.forEach(s => {
+    const obj = data[s.id];
+    if (!obj) return;
+    const rows = Object.keys(obj).map(k => obj[k]).sort((a,c) => (c.s||0)-(a.s||0)).slice(0,10);
+    if (!rows.length) return;
+    any = true;
+    b.insertAdjacentHTML('beforeend', '<h3 style="margin:14px 0 8px">'+s.ico+' '+s.name+'</h3>');
+    rows.forEach((r2,i) => {
+      b.insertAdjacentHTML('beforeend',
+        '<div class="r"><div class="n">'+(['🥇','🥈','🥉'][i] || (i+1)+'.')+'</div>'+
+        '<div>'+esc(r2.nick)+' <span style="opacity:.6;font-size:.85em">'+esc(r2.d||'')+'</span></div>'+
+        '<div class="s">'+(+r2.s||0)+' <span style="color:#ffd166">'+esc(r2.r||'')+'</span></div></div>');
+    });
+  });
+  if (!any) b.innerHTML = '<p class="sub">雲端還沒有任何成績，快去玩一首吧！</p>';
+}
+function showBoard(){
+  const tabs = $('boardTabs');
+  tabs.style.display = CLOUD_ON ? '' : 'none';
+  [...tabs.children].forEach(c => c.classList.toggle('sel', c.dataset.b === boardMode));
+  $('boardMsg').innerHTML = '';
+  if (CLOUD_ON && boardMode === 'cloud') renderBoardCloud();
+  else renderBoard();
+}
+
 $('playerName').value = ST.player || '';
 $('playerName').addEventListener('input', e => { ST.player = e.target.value.slice(0,8); saveStore(); });
+$('playerName').addEventListener('blur', () => { pullThenRefresh(); });
 
-$('btnStart').onclick = () => { ensureAudio(); renderSongs(); show('scr-select'); };
+async function pullThenRefresh(){
+  if (!CLOUD_ON || !ST.player) return;
+  if (await pullPlayer() && $('scr-select').classList.contains('on')) renderSongs();
+}
+
+$('btnStart').onclick = () => { ensureAudio(); renderSongs(); show('scr-select'); pullThenRefresh(); };
 $('btnTest').onclick = testSound;
 $('audioBadge').onclick = () => { ensureAudio(); testSound(); };
 $('btnAudioFix').onclick = () => {
@@ -951,11 +1187,16 @@ $('btnAudioSkip').onclick = () => { $('audioOverlay').classList.remove('on'); au
 $('btnHow').onclick = () => show('scr-how');
 $('btnHowBack').onclick = () => show('scr-title');
 $('btnTitle').onclick = () => show('scr-title');
-$('btnBoard').onclick = () => { renderBoard(); show('scr-board'); };
+$('btnBoard').onclick = () => { showBoard(); show('scr-board'); };
+$('boardTabs').onclick = e => {
+  const t = e.target.closest('.chip'); if (!t) return;
+  boardMode = t.dataset.b;
+  showBoard();
+};
 $('btnBoardBack').onclick = () => { renderSongs(); show('scr-select'); };
 $('btnClear').onclick = () => {
   if (confirm('確定要清空所有成績與排行榜嗎？')){
-    const p = ST.player; ST = defaultStore(); ST.player = p; saveStore(); renderBoard(); renderSongs();
+    const p = ST.player; ST = defaultStore(); ST.player = p; saveStore(); showBoard(); renderSongs();
   }
 };
 $('btnUnlockAll').onclick = () => { ST.unlocked = SONGS.length; saveStore(); renderSongs(); };
@@ -978,6 +1219,9 @@ $('btnRestart2').onclick = () => { G.paused=false; try{actx.resume();}catch(e){}
 $('btnQuit').onclick = quitGame;
 
 document.addEventListener('visibilitychange', () => { if (document.hidden && G.on && !G.paused) pauseGame(); });
+window.addEventListener('online', () => { flushPending(); });
+setCloud('idle');
+if (CLOUD_ON){ pullThenRefresh(); flushPending(); }
 updateAudioBadge();
 resize();
 </script>
