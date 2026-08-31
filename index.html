@@ -61,6 +61,7 @@
   }
   .chip.sel{background:#fff;color:#2a1a4d;border-color:#fff;transform:translateY(-2px);
             box-shadow:0 6px 16px rgba(0,0,0,.3);}
+  .chip.nick{flex:0 1 auto;min-width:0;padding:8px 14px;font-size:14px;border-width:2px;}
   .panel{width:min(560px,100%);background:var(--card);border-radius:24px;padding:16px;margin:8px 0;
          border:2px solid rgba(255,255,255,.16);}
   .lbl{font-size:clamp(13px,3.4vw,16px);opacity:.9;margin:2px 0 8px;font-weight:700;}
@@ -113,6 +114,7 @@
     <div class="panel" style="max-width:420px">
       <div class="lbl">👤 你的暱稱</div>
       <input type="text" id="playerName" maxlength="8" placeholder="輸入暱稱">
+      <div class="row" id="nickSug" style="display:none;margin-top:10px"></div>
     </div>
     <button class="btn big" id="btnStart">開始遊戲 ▶</button>
     <div class="row">
@@ -461,6 +463,63 @@ const SONGS = [
     [77,.5],[77,.5],[76,1],[72,1],[74,1],[72,3],
     [67,.5],[67,.5],[69,1],[67,1],[72,1],[71,2],
     [67,.5],[67,.5],[69,1],[67,1],[74,1],[72,3]
+  ]},
+  { id:'row', name:'划船歌', ico:'🚣', bpm:100,
+    note:'Row Row Row Your Boat', mel:[
+    [60,1],[60,1],[60,.5],[62,.5],[64,1],
+    [64,.5],[62,.5],[64,.5],[65,.5],[67,2],
+    [72,.5],[72,.5],[72,.5],[67,.5],[67,.5],[67,.5],
+    [64,.5],[64,.5],[64,.5],[60,.5],[60,.5],[60,.5],
+    [67,.5],[65,.5],[64,.5],[62,.5],[60,2],
+    [60,1],[60,1],[60,.5],[62,.5],[64,1],
+    [64,.5],[62,.5],[64,.5],[65,.5],[67,2],
+    [72,.5],[72,.5],[72,.5],[67,.5],[67,.5],[67,.5],
+    [64,.5],[64,.5],[64,.5],[60,.5],[60,.5],[60,.5],
+    [67,.5],[65,.5],[64,.5],[62,.5],[60,2]
+  ]},
+  { id:'bee', name:'小蜜蜂', ico:'🐝', bpm:108,
+    note:'嗡嗡嗡，大家勤做工', mel:[
+    [67,1],[64,1],[64,2],  [65,1],[62,1],[62,2],
+    [60,1],[62,1],[64,1],[65,1],[67,1],[67,1],[67,2],
+    [67,1],[64,1],[64,2],  [65,1],[62,1],[62,2],
+    [60,1],[64,1],[67,1],[67,1],[64,4],
+    [62,1],[62,1],[62,1],[62,1],[62,1],[64,1],[65,2],
+    [64,1],[64,1],[64,1],[64,1],[64,1],[65,1],[67,2],
+    [67,1],[64,1],[64,2],  [65,1],[62,1],[62,2],
+    [60,1],[64,1],[67,1],[67,1],[60,4]
+  ]},
+  { id:'london', name:'倫敦鐵橋', ico:'🌉', bpm:110,
+    note:'London Bridge 垮下來', mel:[
+    [67,1.5],[69,.5],[67,1],[65,1],[64,1],[65,1],[67,2],
+    [62,1],[64,1],[65,2],  [64,1],[65,1],[67,2],
+    [67,1.5],[69,.5],[67,1],[65,1],[64,1],[65,1],[67,2],
+    [62,1],[67,1],[64,1],[60,3],
+    [67,1.5],[69,.5],[67,1],[65,1],[64,1],[65,1],[67,2],
+    [62,1],[64,1],[65,2],  [64,1],[65,1],[67,2],
+    [67,1.5],[69,.5],[67,1],[65,1],[64,1],[65,1],[67,2],
+    [62,1],[67,1],[64,1],[60,3]
+  ]},
+  { id:'macdonald', name:'王老先生有塊地', ico:'🐄', bpm:112,
+    note:'咿呀咿呀唷', mel:[
+    [60,1],[60,1],[60,1],[67,1],[69,1],[69,1],[67,2],
+    [64,1],[64,1],[62,1],[62,1],[60,2],
+    [55,.5],[55,.5],[60,1],[60,1],[60,2],
+    [55,.5],[55,.5],[60,1],[60,1],[60,2],
+    [60,.5],[60,.5],[55,1],[60,.5],[60,.5],[55,1],
+    [60,.5],[60,.5],[60,.5],[60,.5],[55,1],[55,1],
+    [60,1],[60,1],[60,1],[67,1],[69,1],[69,1],[67,2],
+    [64,1],[64,1],[62,1],[62,1],[60,2]
+  ]},
+  { id:'jingle', name:'聖誕鈴聲', ico:'🔔', bpm:120,
+    note:'Jingle Bells 叮叮噹', mel:[
+    [64,1],[64,1],[64,2],  [64,1],[64,1],[64,2],
+    [64,1],[67,1],[60,1],[62,1],[64,4],
+    [65,1],[65,1],[65,1],[65,1],[65,1],[64,1],[64,1],[64,.5],[64,.5],
+    [64,1],[62,1],[62,1],[64,1],[62,2],[67,2],
+    [64,1],[64,1],[64,2],  [64,1],[64,1],[64,2],
+    [64,1],[67,1],[60,1],[62,1],[64,4],
+    [65,1],[65,1],[65,1],[65,1],[65,1],[64,1],[64,1],[64,.5],[64,.5],
+    [67,1],[67,1],[65,1],[62,1],[60,4]
   ]},
   { id:'rainbow', name:'彩虹節奏（原創）', ico:'🌈', bpm:124,
     note:'快節奏電子風，挑戰你的手速', mel:[
@@ -1173,16 +1232,55 @@ function showBoard(){
   else renderBoard();
 }
 
+/* ---------- 暱稱建議（本裝置曾用過的暱稱，focus 時顯示） ---------- */
+const NICKS_KEY = 'rhythmStar_nicks';
+function loadNicks(){
+  try{ const a = JSON.parse(localStorage.getItem(NICKS_KEY) || '[]'); return Array.isArray(a) ? a : []; }
+  catch(e){ return []; }
+}
+function saveNick(nick){
+  nick = String(nick || '').trim().slice(0, 8);
+  if (!nick) return;
+  const a = loadNicks().filter(n => n !== nick);
+  a.unshift(nick);
+  try{ localStorage.setItem(NICKS_KEY, JSON.stringify(a.slice(0, 8))); }catch(e){}
+}
+function renderNickSug(){
+  const box = $('nickSug');
+  const cur = $('playerName').value.trim();
+  const list = loadNicks().filter(n => n !== cur);
+  box.innerHTML = '';
+  if (!list.length){ box.style.display = 'none'; return; }
+  list.forEach(n => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'chip nick'; b.textContent = n;
+    // pointerdown 先於輸入框的 blur 觸發；preventDefault 保住焦點，清單才不會先被收掉
+    b.addEventListener('pointerdown', e => {
+      e.preventDefault();
+      $('playerName').value = n;
+      ST.player = n; saveStore();
+      hideNickSug();
+      pullThenRefresh();
+    });
+    box.appendChild(b);
+  });
+  box.style.display = '';
+}
+function hideNickSug(){ $('nickSug').style.display = 'none'; }
+
 $('playerName').value = ST.player || '';
-$('playerName').addEventListener('input', e => { ST.player = e.target.value.slice(0,8); saveStore(); });
-$('playerName').addEventListener('blur', () => { pullThenRefresh(); });
+$('playerName').addEventListener('input', e => { ST.player = e.target.value.slice(0,8); saveStore(); renderNickSug(); });
+$('playerName').addEventListener('focus', renderNickSug);
+$('playerName').addEventListener('blur', () => { setTimeout(hideNickSug, 120); pullThenRefresh(); });
+// 舊版沒有暱稱清單：把目前暱稱補進去，讓升級後第一次 focus 就有建議
+if (ST.player && !loadNicks().length) saveNick(ST.player);
 
 async function pullThenRefresh(){
   if (!CLOUD_ON || !ST.player) return;
   if (await pullPlayer() && $('scr-select').classList.contains('on')) renderSongs();
 }
 
-$('btnStart').onclick = () => { ensureAudio(); renderSongs(); show('scr-select'); pullThenRefresh(); };
+$('btnStart').onclick = () => { ensureAudio(); saveNick(ST.player); renderSongs(); show('scr-select'); pullThenRefresh(); };
 $('btnTest').onclick = testSound;
 $('audioBadge').onclick = () => { ensureAudio(); testSound(); };
 $('btnAudioFix').onclick = () => {
