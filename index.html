@@ -80,6 +80,9 @@
          border-radius:14px;padding:9px 13px;margin-bottom:6px;font-size:clamp(14px,3.6vw,17px);}
   .bd .r .n{font-weight:900;width:26px;}
   .bd .r .s{margin-left:auto;font-weight:900;}
+  .bd .r.me{background:rgba(255,209,102,.26);border:1px solid rgba(255,209,102,.7);}
+  #resBoard{width:min(560px,100%);margin:6px 0 2px;}
+  #resBoard h3{font-size:clamp(15px,3.8vw,19px);margin:10px 0 8px;text-align:center;}
   .foot{opacity:.6;font-size:12px;margin-top:14px;text-align:center;line-height:1.7;}
   .warn{background:rgba(255,120,120,.2);border:1px solid rgba(255,150,150,.5);border-radius:14px;
         padding:9px 12px;font-size:13px;margin:8px 0;max-width:560px;text-align:center;}
@@ -193,6 +196,7 @@
     <div class="stars" id="resStars">⭐⭐⭐</div>
     <div class="big-rate" id="resRate">S</div>
     <div class="panel" id="resPanel"></div>
+    <div id="resBoard"></div>
     <div class="row">
       <button class="btn" id="btnRetry">🔁 再玩一次</button>
       <button class="btn ghost" id="btnBackSel">🎵 換一首</button>
@@ -366,9 +370,12 @@ async function pushResult(evts){
 }
 
 /* ---------- 0f. 離線重試佇列（存遊玩結果事件，flush 重跑 pull→merge→push） ---------- */
+/* 佇列不帶暱稱，pushResult 會把它算進「當前 profile」的成績上傳，
+   所以佇列必須跟著 profile 走，否則切暱稱後 flush 會記到別人頭上。 */
 const PEND_KEY = 'rhythmStar_pending';
-function loadPend(){ try{ return JSON.parse(localStorage.getItem(PEND_KEY) || '[]'); }catch(e){ return []; } }
-function savePend(q){ try{ localStorage.setItem(PEND_KEY, JSON.stringify(q.slice(-50))); }catch(e){} }
+const pendKey = () => PEND_KEY + '_' + ST.activeProfile;
+function loadPend(){ try{ return JSON.parse(localStorage.getItem(pendKey()) || '[]'); }catch(e){ return []; } }
+function savePend(q){ try{ localStorage.setItem(pendKey(), JSON.stringify(q.slice(-50))); }catch(e){} }
 let flushing = false;
 async function flushPending(){
   if (flushing || !CLOUD_ON) return;
@@ -400,27 +407,70 @@ function setCloud(st){
   else { el.className = 'badge idle'; el.textContent = '☁️ 雲端記錄已啟用'; }
 }
 
-/* ---------- 1. 成績儲存（localStorage，失敗自動退回記憶體） ---------- */
+/* ---------- 1. 成績儲存（localStorage，失敗自動退回記憶體） ----------
+   每個暱稱各存一份 profile（unlocked/plays/rec）。同一台裝置切暱稱時，
+   若共用一份存檔，舊暱稱的成績會被 mergeStore 併進新暱稱、再被 pushResult
+   寫上雲端排行榜 —— 所以身分相關的資料一律關在 profile 裡。
+   ST.unlocked/plays/rec 是「當前 profile 的即時視圖」，saveStore() 負責寫回；
+   ST.board（這台裝置排行）是裝置層級，刻意不分暱稱。 */
 const KEY = 'rhythmStar_v1';
 let memBlob = null, storageOK = true;
 try { localStorage.setItem(KEY + '_t', '1'); localStorage.removeItem(KEY + '_t'); }
 catch (e) { storageOK = false; }
 
-function defaultStore(){ return { player:'', unlocked:1, plays:0, rec:{}, board:{} }; }
+function defaultProfile(){ return { unlocked:1, plays:0, rec:{} }; }
+function defaultStore(){
+  return { player:'', board:{}, activeProfile:'guest', profiles:{},
+           unlocked:1, plays:0, rec:{} };
+}
 function loadStore(){
   let raw = null;
   try { raw = localStorage.getItem(KEY); } catch(e){}
   if (raw == null) raw = memBlob;
-  if (!raw) return defaultStore();
-  try { const o = JSON.parse(raw); return Object.assign(defaultStore(), o); }
-  catch(e){ return defaultStore(); }
+  let o = null;
+  if (raw){ try { o = JSON.parse(raw); } catch(e){} }
+  const s = Object.assign(defaultStore(), o || {});
+  if (!s.profiles || typeof s.profiles !== 'object') s.profiles = {};
+  if (!s.board || typeof s.board !== 'object') s.board = {};
+  if (o && !o.profiles){
+    // 舊版單份存檔 → 整包搬進目前暱稱的 profile
+    s.activeProfile = nickKey(s.player);
+    s.profiles[s.activeProfile] =
+      { unlocked: o.unlocked || 1, plays: o.plays || 0, rec: o.rec || {} };
+  }
+  const p = s.profiles[s.activeProfile] || defaultProfile();
+  s.profiles[s.activeProfile] = p;
+  s.unlocked = p.unlocked || 1; s.plays = p.plays || 0; s.rec = p.rec || {};
+  return s;
 }
 function saveStore(){
-  const raw = JSON.stringify(ST);
+  ST.profiles[ST.activeProfile] =
+    { unlocked: ST.unlocked, plays: ST.plays, rec: ST.rec };
+  const raw = JSON.stringify({ player: ST.player, board: ST.board,
+                               activeProfile: ST.activeProfile, profiles: ST.profiles });
   memBlob = raw;
   try { localStorage.setItem(KEY, raw); } catch(e){ storageOK = false; }
 }
+/* 切到 nick 對應的 profile。暱稱鍵沒變就不動，回傳是否真的換過。 */
+function useProfile(nick){
+  const k = nickKey(nick);
+  if (k === ST.activeProfile) return false;
+  saveStore();                       // 先把當前 profile 寫回去，再換人
+  ST.activeProfile = k;
+  const p = ST.profiles[k] || defaultProfile();
+  ST.unlocked = p.unlocked || 1; ST.plays = p.plays || 0; ST.rec = p.rec || {};
+  saveStore();
+  return true;
+}
 let ST = loadStore();
+// 舊版共用一條離線佇列 → 搬到目前 profile 底下
+try {
+  const oldPend = localStorage.getItem(PEND_KEY);
+  if (oldPend != null){
+    if (localStorage.getItem(pendKey()) == null) localStorage.setItem(pendKey(), oldPend);
+    localStorage.removeItem(PEND_KEY);
+  }
+} catch(e){}
 
 /* ---------- 2. 曲目資料（公版童謠 + 原創曲） ----------
    melody: [MIDI音高, 拍數]，音高 0 = 休止符                     */
@@ -1115,21 +1165,22 @@ function finish(){
     saveStore();
   }
 
-  const best = ST.rec[G.song.id+'_'+G.di];
+  const tail =
+    (unlockedNew?'<div class="stat" style="border:0;color:#ffd166"><span>🔓 解鎖新歌曲！</span><b>'+SONGS[idx+1].name+'</b></div>':'')+
+    (CLOUD_ON?'<div class="stat" id="cloudStat" style="border:0;display:none"><span>☁️ 雲端</span><b id="cloudStatTxt"></b></div>':'');
   document.getElementById('resPanel').innerHTML =
     '<div class="stat"><span>🎯 準確度</span><b>'+Math.round(acc*100)+'%</b></div>'+
     '<div class="stat"><span style="color:#ffd166">✨ 完美</span><b>'+G.nP+'</b></div>'+
     '<div class="stat"><span style="color:#5ee6a8">👍 不錯</span><b>'+G.nG+'</b></div>'+
     '<div class="stat"><span style="color:#ff9aa2">💧 漏掉</span><b>'+G.nM+'</b></div>'+
     '<div class="stat"><span>🔥 最高連擊</span><b>'+G.maxCombo+'</b></div>'+
-    '<div class="stat"><span>💯 分數</span><b>'+G.score+'</b></div>'+
-    (prac ? '<div class="stat" style="border:0"><span>🐢 練習模式</span><b>不記錄</b></div>'
-          : '<div class="stat" style="border:0"><span>🏅 這個難度最佳</span><b>'+(best?best.score:G.score)+
-            (isNew?' <span style="color:#ffd166">NEW!</span>':'')+'</b></div>'+
-            (unlockedNew?'<div class="stat" style="border:0;color:#ffd166"><span>🔓 解鎖新歌曲！</span><b>'+SONGS[idx+1].name+'</b></div>':'')+
-            (CLOUD_ON?'<div class="stat" id="cloudStat" style="border:0;display:none"><span>☁️ 雲端</span><b id="cloudStatTxt"></b></div>':''));
+    '<div class="stat"'+((prac||tail)?'':' style="border:0"')+'><span>💯 分數</span><b>'+G.score+
+      (isNew?' <span style="color:#ffd166">NEW!</span>':'')+'</b></div>'+
+    (prac ? '<div class="stat" style="border:0"><span>🐢 練習模式</span><b>不記錄</b></div>' : tail);
 
+  const songId = G.song.id;
   if (!prac && CLOUD_ON){
+    // 等本場成績上傳完才拉榜，玩家才看得到自己剛打出來的分數
     queueResult({ song:G.song.id, diff:G.di, score:G.score, rate:rate,
                   combo:G.maxCombo, acc:Math.round(acc*100) }).then(() => {
       const el = document.getElementById('cloudStat');
@@ -1138,10 +1189,49 @@ function finish(){
         document.getElementById('cloudStatTxt').textContent =
           loadPend().length ? '📴 已暫存，連線後上傳' : '已上傳雲端排行';
       }
+      renderResultBoard(songId);
     });
+  } else {
+    renderResultBoard(songId);
   }
 
   show('scr-result');
+}
+
+/* 結束頁排行榜：該曲目前 5 名（跨難度，每位玩家一筆最佳）。
+   雲端優先，失敗或純本機模式退回這台裝置的紀錄。 */
+const RES_BOARD_N = 5;
+async function renderResultBoard(songId){
+  const box = document.getElementById('resBoard');
+  if (!box) return;
+  const sg = SONGS.filter(x => x.id === songId)[0];
+  const head = '<h3>🏆 ' + (sg ? sg.ico + ' ' + sg.name : '') + ' 排行榜</h3>';
+  box.innerHTML = head + '<p class="sub" style="margin:0">' +
+                  (CLOUD_ON ? '☁️ 載入中…' : '　') + '</p>';
+  let rows = null, note = '';
+  if (CLOUD_ON){
+    const r = await dbGet('board/' + songId);
+    if (r.ok && r.data)
+      rows = Object.keys(r.data).map(k => ({
+        key:k, n:r.data[k].nick, s:+r.data[k].s || 0, r:r.data[k].r || '', d:r.data[k].d || '' }));
+    else if (!r.ok)
+      note = '<div class="warn">☁️ 雲端排行載入失敗，先顯示這台裝置的紀錄</div>';
+  }
+  if (!rows)
+    rows = (ST.board[songId] || []).map(x => ({
+      key:nickKey(x.n), n:x.n, s:+x.s || 0, r:x.r || '', d:x.d || '' }));
+  rows.sort((a,b) => b.s - a.s);
+  rows = rows.slice(0, RES_BOARD_N);
+  if (!rows.length){
+    box.innerHTML = head + note + '<p class="sub" style="margin:0">還沒有紀錄，你就是第一個！</p>';
+    return;
+  }
+  const me = pid();
+  box.innerHTML = head + note + '<div class="bd">' + rows.map((r,i) =>
+    '<div class="r' + (r.key === me ? ' me' : '') + '">' +
+    '<div class="n">' + (['🥇','🥈','🥉'][i] || (i+1)+'.') + '</div>' +
+    '<div>' + esc(r.n || '小玩家') + ' <span style="opacity:.6;font-size:.85em">' + esc(r.d) + '</span></div>' +
+    '<div class="s">' + r.s + ' <span style="color:#ffd166">' + esc(r.r) + '</span></div></div>').join('') + '</div>';
 }
 
 /* ---------- 10. UI 流程 ---------- */
@@ -1260,7 +1350,7 @@ function renderNickSug(){
       $('playerName').value = n;
       ST.player = n; saveStore();
       hideNickSug();
-      pullThenRefresh();
+      commitNick();
     });
     box.appendChild(b);
   });
@@ -1271,7 +1361,7 @@ function hideNickSug(){ $('nickSug').style.display = 'none'; }
 $('playerName').value = ST.player || '';
 $('playerName').addEventListener('input', e => { ST.player = e.target.value.slice(0,8); saveStore(); renderNickSug(); });
 $('playerName').addEventListener('focus', renderNickSug);
-$('playerName').addEventListener('blur', () => { setTimeout(hideNickSug, 120); pullThenRefresh(); });
+$('playerName').addEventListener('blur', () => { setTimeout(hideNickSug, 120); commitNick(); });
 // 舊版沒有暱稱清單：把目前暱稱補進去，讓升級後第一次 focus 就有建議
 if (ST.player && !loadNicks().length) saveNick(ST.player);
 
@@ -1280,7 +1370,18 @@ async function pullThenRefresh(){
   if (await pullPlayer() && $('scr-select').classList.contains('on')) renderSongs();
 }
 
-$('btnStart').onclick = () => { ensureAudio(); saveNick(ST.player); renderSongs(); show('scr-select'); pullThenRefresh(); };
+/* 暱稱確認點（失焦／點建議／按開始）。input 每打一個字都會觸發，
+   所以不在那裡切 profile，否則打「小明」會生出「小」「小明」兩份。 */
+function commitNick(){
+  if (useProfile(ST.player) && $('scr-select').classList.contains('on')) renderSongs();
+  pullThenRefresh();
+  flushPending();
+}
+
+$('btnStart').onclick = () => {
+  ensureAudio(); saveNick(ST.player); useProfile(ST.player);
+  renderSongs(); show('scr-select'); pullThenRefresh(); flushPending();
+};
 $('btnTest').onclick = testSound;
 $('audioBadge').onclick = () => { ensureAudio(); testSound(); };
 $('btnAudioFix').onclick = () => {
@@ -1303,7 +1404,9 @@ $('boardTabs').onclick = e => {
 $('btnBoardBack').onclick = () => { renderSongs(); show('scr-select'); };
 $('btnClear').onclick = () => {
   if (confirm('確定要清空所有成績與排行榜嗎？')){
-    const p = ST.player; ST = defaultStore(); ST.player = p; saveStore(); showBoard(); renderSongs();
+    const p = ST.player;
+    ST = defaultStore(); ST.player = p; ST.activeProfile = nickKey(p);
+    saveStore(); showBoard(); renderSongs();
   }
 };
 $('btnUnlockAll').onclick = () => { ST.unlocked = SONGS.length; saveStore(); renderSongs(); };
@@ -1328,6 +1431,8 @@ $('btnQuit').onclick = quitGame;
 document.addEventListener('visibilitychange', () => { if (document.hidden && G.on && !G.paused) pauseGame(); });
 window.addEventListener('online', () => { flushPending(); });
 setCloud('idle');
+// 上次離開時暱稱可能改到一半沒確認（input 會存 player 但不切 profile），開場先對齊
+useProfile(ST.player);
 if (CLOUD_ON){ pullThenRefresh(); flushPending(); }
 updateAudioBadge();
 resize();
